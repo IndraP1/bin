@@ -1,0 +1,136 @@
+#!/bin/bash
+
+scp_file=''
+target=''
+user='root'
+known=false
+#NOTE: Replace example passwords with actual library of passwords
+declare -a pass_variations=("passwd1" "passwd2" "passw*d1" "example_passwd")
+
+# attempt_access uses a previously set SSHPASS variable to perform an ssh or scp attempt
+function attempt_access()
+{
+	if [[ $scp_file != "" ]]
+	then
+		echo "Attempting to scp "$scp_file" to $user@$target's home directory..."
+		sshpass -e scp -oStrictHostKeyChecking=no $scp_file $user@$target:~/ 2> /dev/null
+	else
+		echo "Attempting to ssh to $user@$target..."
+		sshpass -e ssh -oStrictHostKeyChecking=no $user@$target 2> /dev/null
+	fi
+}
+
+# Parse user input
+while getopts ':t:f:u:h' flag 
+do
+	case $flag in
+		t)
+			target=$OPTARG
+			;;
+		f) 
+			scp_file=$OPTARG
+			;;
+		u)  # Default to root if flag not specified
+			user=$OPTARG
+			;;
+		h)
+			echo "USAGE:"
+			echo "-t | set target server to connect to"
+			echo "-u | set user to connect as (default is root if not specified)"
+			echo "-f | set file to transfer if necessary"
+			exit 0
+			;;
+		*) 
+			echo "ERROR: Unexpected flag ${flag}"
+			exit 1
+			;;
+	esac
+done
+
+if [[ $target != "" ]] 
+then
+	echo "Target sever is $target" 
+else
+	echo "ERROR: No target server provided."
+	exit 1
+fi
+
+if [[ $scp_file != "" ]]
+then
+	echo "File transfer flag set, file is: $scp_file"
+	if [ ! -f "$scp_file" ]
+	then
+		echo "ERROR: File to transfer not found."
+		exit 1
+	fi
+fi
+
+# Try to resolve given input to known sites
+# NOTE: Replace filler variables as needed
+example='.example.gome.com'
+example_regex="^(my[0-9]{1}|regex|test[0-9]{1})$"
+demo='demo'
+
+if [[ $target == *$example* ]] || [[ $target =~ $example_regex ]]
+then
+	export SSHPASS='Password Known Here'
+	if [[ $target =~ $example_regex ]]
+	then 
+		target=$target$example
+		known=true
+	fi
+fi
+
+if [[ $target == *$demo* ]] 
+then
+	export SSHPASS='Password Also Known'
+	known=true
+fi
+
+# Attempt access for the first time
+if [[ $known == true ]]
+then
+	attempt_access
+	ret=$?
+	# Handle return values
+	if [[ ret -eq 0 ]]
+	then 
+		exit 0
+	fi
+
+	if [[ ret -eq 1 ]]
+	then 
+		echo "ERROR: Invalid user input."
+		exit 1
+	fi
+
+	if [[ ret -eq 255 ]]
+	then 
+		echo "ERROR: Cannot reach target."
+		exit 1
+	fi
+fi
+
+# If ssh is unsuccessful then try library of passwords
+echo "Initial ssh attempt failed due to incorrect credentials or target not known. Attempting all passwords in library..."
+echo "=============================="
+for i in "${pass_variations[@]}"
+do
+	export SSHPASS=$i
+	attempt_access
+	ret=$?
+
+	if [[ ret -eq 0 ]] || [[ ret -eq 5 ]]
+	then
+		exit 0
+	fi
+
+	if [[ ret -eq 255 ]] || [[ ret -eq 1 ]]
+	then 
+		echo "ERROR: Connection lost or ssh session terminated unexpectedly."
+		exit 1
+	fi
+done
+echo "ERROR: All known passwords attempted."
+exit 1
+
